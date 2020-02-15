@@ -7,7 +7,7 @@ import sys
 import CppHeaderParser
 from pathlib import Path
 
-sys.path.append(Path(__file__).parent /"pyUtils")
+sys.path.append((Path(__file__).parent / "pyUtils").absolute())
 from color_text import ColorText as CT
 from headInGraph import *
 
