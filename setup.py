@@ -9,10 +9,11 @@ import shutil
 import sys
 from collections import namedtuple
 
-from color_text import ColorText as CT
 from genFuncs import genHelper
 from pathlib import Path
 from utils import Utils
+
+from color_text import ColorText as CT
 
 sys.path.append((Path(__file__) / "scripts/pyUtils").absolute())
 sys.path.append((Path(__file__) / "scripts/setUpScripts").absolute())
@@ -21,6 +22,7 @@ sys.path.append((Path(__file__) / "scripts/setUpScripts").absolute())
 BuildPaths = namedtuple("BuildPaths", 'url build_dir build_sub_dir local_dir')
 LibNameVer = namedtuple("LibNameVer", 'name version')
 GitRefs = namedtuple("GitRefs", "branches tags")
+possible_bashComplete_dirs = ["./bashCompletes", "./bash_completion.d", "./etc/bash_completion.d"]
 
 
 class LibDirMaster:
@@ -39,8 +41,7 @@ class LibDirMaster:
 
 
 def joinNameVer(libNameVerTup):
-    return os.path.join(libNameVerTup.name, libNameVerTup.version, libNameVerTup.name)
-
+    return Path(libNameVerTup.name).joinpath(libNameVerTup.version, libNameVerTup.name)
 
 class CPPLibPackageVersionR:
     def __init__(self, name, url, version, dirMaster):
@@ -855,9 +856,9 @@ class Packages:
                 zlibIncFlags = zlibPack.versions_[defaultZlibVersion].getIncludeFlags(self.dirMaster_.install_dir)
                 zlibAddFlags = "LDFLAGS=\"" + zlibLdFlags + "\" CXXFLAGS=\"" + zlibIncFlags + "\""
                 pack.versions_[ref].cmd_ = buildCmd.replace("ZLIBADDFLAGS", zlibAddFlags)
-            Utils.mkdir(os.path.join(self.dirMaster_.cache_dir, name))
-            with open(os.path.join(self.dirMaster_.cache_dir, name, name + '.pkl'), 'wb') as output:
-                pickle.dump(pack, output, pickle.HIGHEST_PROTOCOL)
+            Utils.mkdir(self.dirMaster_.cache_dir / name)
+            (self.dirMaster_.cache_dir / name / name + '.pkl').write_binary(
+                    pickle.dump(pack, output, pickle.HIGHEST_PROTOCOL))
         return pack
 
     def __pigz(self):
@@ -944,10 +945,10 @@ class Packages:
         return self.handle_pickling(buildCmd, name, pack, url)
 
     def handle_pickling(self, buildCmd, name, pack, url):
-        inputPkl = Path(self.dirMaster_.cache_dir) / name / name +'.pkl'
+        inputPkl = Path(self.dirMaster_.cache_dir) / name / name + '.pkl'
         if self.args.noInternet or inputPkl.exists():
-                pack = pickle.load(inputPkl.read_binary())
-                pack.defaultBuildCmd_ = buildCmd
+            pack = pickle.load(inputPkl.read_binary())
+            pack.defaultBuildCmd_ = buildCmd
         else:
             refs = pack.getGitRefs(url)
             for ref in [b.replace("/", "__") for b in refs.branches] + refs.tags:
@@ -1689,13 +1690,15 @@ class Packages:
 
 class Setup:
     def __init__(self, args):
-        self.extDirLoc = ""  # the location where the libraries will be installed
-        # if no compile file set up and assume external is next to setup.py
+        """
+        self.extDirLoc  : the location where the libraries will be installed
+        if no compile file set up and assume external is next to setup.py
+        """
+
         if not args.compfile:
-            self.extDirLoc = "external"
-            # self.extDirLoc = os.path.abspath(os.path.join(os.path.dirname(__file__), "external"))
+            self.extDirLoc = Path(__file__).parent / "external"
         else:
-            self.extDirLoc = os.path.abspath(self.parseForExtPath(args.compfile[0]))
+            self.extDirLoc = Path(self.parseForExtPath(args.compfile[0]))
         self.dirMaster_ = LibDirMaster(self.extDirLoc)
         self.args = args  # command line arguments parsed by argument parser
         self.setUps = {}  # all available set ups
@@ -1879,7 +1882,7 @@ class Setup:
             extPath = extPath.strip()
         else:
             print("did not find external folder location; assuming ./external")
-            extPath = "./external"
+            extPath = Path("./external")
         return extPath
 
     def parseSetUpNeeded(self, fn):
@@ -1898,22 +1901,14 @@ class Setup:
                 self.args.private = True;
 
     def parseCompFile(self, fn):
-        ret = {}
-        with open(fn) as f:
-            for line in f:
-                if '=' in line:
-                    toks = line.split('=')
-                    ret[toks[0].strip()] = toks[1].strip()
-        return ret
+        fn = Path(fn)
+        intermediate = [line.split('=') for line in fn.read_text().splitlines() if "=" in line]
+        return {L[0].strip(): L[1].strip() for L in intermediate}
 
     def parserForCompilers(self, fn):
         args = self.parseCompFile(fn)
-        if 'CC' in args:
-            self.CC = args['CC']
-            self.args.CC = self.CC
-        if 'CXX' in args:
-            self.CXX = args['CXX']
-            self.args.CXX = self.CXX
+        self.args.CC = args.get('CC')
+        self.args.CXX = args.get('CXX')
 
     def rmDirsForLibs(self, libs):
         for l in libs:
@@ -1927,10 +1922,10 @@ class Setup:
             if not pack.hasVersion(packVer.version):
                 raise Exception("No version " + str(packVer.version) + " for " + str(packVer.name))
             p = pack.versions_[packVer.version].bPaths_
-            if os.path.exists(p.build_dir):
+            if Path(p.build_dir).exists():
                 print("Removing " + CT.boldBlack(p.build_dir))
                 Utils.rm_rf(p.build_dir)
-            if os.path.exists(p.local_dir):
+            if Path(p.local_dir).exists():
                 print("Removing " + CT.boldBlack(p.local_dir))
                 Utils.rm_rf(p.local_dir)
 
@@ -1943,7 +1938,7 @@ class Setup:
         if not pack.hasVersion(version):
             raise Exception("Package " + str(name) + " doesn't have version " + str(version))
         bPath = pack.versions_[version].bPaths_
-        if os.path.exists(bPath.local_dir):
+        if Path(bPath.local_dir).exists():
             print(CT.boldGreen(name + ":" + version), "found at " + CT.boldBlue(bPath.local_dir))
         else:
             print(CT.boldGreen(name + ":" + version), CT.boldRed("NOT"), "found; building...")
@@ -1975,7 +1970,7 @@ class Setup:
         if self.noInternet_:
             newUrl = bPath.url.replace(".git", "/archive/" + str(packVer.nameVer_.version) + ".tar.gz").replace(
                 "git@github.com:", "https://github.com/")
-            bPath = BuildPaths(newUrl, bPath.build_dir, bPath.build_sub_dir, bPath.local_dir)
+            bPath = BuildPaths(newUrl, Path(bPath.build_dir), Path(bPath.build_sub_dir), Path(bPath.local_dir))
             base_file = os.path.basename(bPath.url)
             fnp = os.path.join(self.dirMaster_.ext_tars, packVer.nameVer_.name, base_file)
             if not os.path.exists(fnp):
@@ -1990,7 +1985,7 @@ class Setup:
         ##untaredDir = os.listdir(bPath.build_dir)[0]
         untarContents = os.listdir(bPath.build_dir);
         for untarContent in untarContents:
-            if os.path.isdir(os.path.join(bPath.build_dir, untarContent)):
+            if (Path(bPath.build_dir) / untarContent).is_dir():
                 untaredDir = untarContent;
                 break;
 
@@ -2105,7 +2100,7 @@ class Setup:
             newUrl = bPath.url.replace(".git", "/archive/" + str(packVer.nameVer_.version) + ".tar.gz").replace(
                 "git@github.com:", "https://github.com/")
             base_file = os.path.basename(newUrl)
-            fnp = os.path.join(self.dirMaster_.ext_tars, packVer.nameVer_.name, base_file)
+            fnp = Path(self.dirMaster_.ext_tars) / packVer.nameVer_.name / base_file
             Utils.clear_dir(os.path.dirname(bPath.local_dir))
             Utils.untar(fnp, os.path.dirname(bPath.local_dir))
             ## might not be the best way to do this but works for now
@@ -2469,7 +2464,7 @@ class Setup:
 
     def downloadFiles(self):
         for setUpNeeded in self.setUpsNeeded:
-            topTempDir = os.path.join(self.dirMaster_.base_dir, "temp")
+            topTempDir = Path(self.dirMaster_.base_dir) / "temp"
             self.packages_.checkForPackVer(setUpNeeded)
             pack = self.__package(setUpNeeded.name)
             packVer = pack.versions_[setUpNeeded.version]
@@ -2610,15 +2605,10 @@ class SetupRunner:
             s.printAvailableSetUps()
             return 0
         if args.addBashCompletion:
-            if (os.path.isdir("./bashCompletes")):
-                cmd = "echo >> ~/.bash_completion && cat bashCompletes/* >> ~/.bash_completion"
-                Utils.run(cmd)
-            if (os.path.isdir("./bash_completion.d")):
-                cmd = "echo >> ~/.bash_completion && cat bash_completion.d/* >> ~/.bash_completion"
-                Utils.run(cmd)
-            if (os.path.isdir("./etc/bash_completion.d")):
-                cmd = "echo >> ~/.bash_completion && cat ./etc/bash_completion.d/* >> ~/.bash_completion"
-                Utils.run(cmd)
+            first_path = [Path(x) for x in possible_bashComplete_dirs if Path(x).is_dir()][0]
+            bash_completion = Path("~/.bash_completion")
+            bash_completion.open('a')
+            [bash_completion.write_text(file.read_text()) for file in first_path.rglob('*')]
             return 0
         s.externalChecks()
         if (args.instRPackageName):
